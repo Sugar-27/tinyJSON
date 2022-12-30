@@ -30,14 +30,14 @@ static int test_pass = 0;
 
 static void test_parse_null() {
     tinyjson::value v;
-    v.tiny_type = tinyjson::TRUE;
+    v.tiny_type = tinyjson::FALSE;
     EXPECT_EQ_INT(tinyjson::PARSE_OK, tinyjson::parse(&v, "null"));
     EXPECT_EQ_INT(tinyjson::TINYNULL, tinyjson::get_type(&v));
 }
 
 static void test_parse_true() {
     tinyjson::value v;
-    v.tiny_type = tinyjson::TRUE;
+    v.tiny_type = tinyjson::FALSE;
     EXPECT_EQ_INT(tinyjson::PARSE_OK, tinyjson::parse(&v, "true"));
     EXPECT_EQ_INT(tinyjson::TRUE, tinyjson::get_type(&v));
 }
@@ -49,10 +49,44 @@ static void test_parse_false() {
     EXPECT_EQ_INT(tinyjson::FALSE, tinyjson::get_type(&v));
 }
 
+static void test_parse_expect_value() {
+    tinyjson::value v;
+
+    v.tiny_type = tinyjson::FALSE;
+    EXPECT_EQ_INT(tinyjson::PARSE_EXPECT_VALUE, tinyjson::parse(&v, ""));
+    EXPECT_EQ_INT(tinyjson::TINYNULL, tinyjson::get_type(&v));
+
+    v.tiny_type = tinyjson::FALSE;
+    EXPECT_EQ_INT(tinyjson::PARSE_EXPECT_VALUE, tinyjson::parse(&v, " "));
+    EXPECT_EQ_INT(tinyjson::TINYNULL, tinyjson::get_type(&v));
+}
+
+static void test_parse_invalid_value() {
+    tinyjson::value v;
+
+    v.tiny_type = tinyjson::FALSE;
+    EXPECT_EQ_INT(tinyjson::PARSE_INVALID_VALUE, tinyjson::parse(&v, "nul"));
+    EXPECT_EQ_INT(tinyjson::TINYNULL, tinyjson::get_type(&v));
+
+    v.tiny_type = tinyjson::FALSE;
+    EXPECT_EQ_INT(tinyjson::PARSE_INVALID_VALUE, tinyjson::parse(&v, "?"));
+    EXPECT_EQ_INT(tinyjson::TINYNULL, tinyjson::get_type(&v));
+}
+
+static void test_parse_root_not_singular() {
+    tinyjson::value v;
+    v.tiny_type = tinyjson::FALSE;
+    EXPECT_EQ_INT(tinyjson::PARSE_ROOT_NOT_SINGULAR, tinyjson::parse(&v, "null x"));
+    EXPECT_EQ_INT(tinyjson::TINYNULL, tinyjson::get_type(&v));
+}
+
 static void test_parse() {
     test_parse_null();
     test_parse_true();
     test_parse_false();
+    test_parse_expect_value();
+    test_parse_invalid_value();
+    test_parse_root_not_singular();
 }
 
 int main() {
