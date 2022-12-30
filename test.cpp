@@ -28,6 +28,10 @@ static int test_pass = 0;
 
 #define EXPECT_EQ_INT(expect, actual)    EXPECT_EQ_BASE((expect) == (actual), expect, actual, "%d")
 #define EXPECT_EQ_DOUBLE(expect, actual) EXPECT_EQ_BASE((expect) == (actual), expect, actual, "%.17g")
+#define EXPECT_EQ_STRING(expect, actual, alength)                                                                      \
+    EXPECT_EQ_BASE(sizeof(expect) - 1 == (alength) && memcmp(expect, actual, alength) == 0, expect, actual, "%s")
+#define EXPECT_TRUE(actual)  EXPECT_EQ_BASE((actual) != 0, "true", "false", "%s")
+#define EXPECT_FALSE(actual) EXPECT_EQ_BASE((actual) == 0, "false", "true", "%s")
 
 #define TEST_ERROR(error, json)                                                                                        \
     do {                                                                                                               \
@@ -134,6 +138,57 @@ static void test_parse_number_too_big() {
     TEST_ERROR(tinyjson::PARSE_NUMBER_TOO_BIG, "-1e309");
 }
 
+static void test_parse_missing_quotation_mark() {
+    TEST_ERROR(tinyjson::PARSE_MISS_QUOTATION_MARK, "\"");
+    TEST_ERROR(tinyjson::PARSE_MISS_QUOTATION_MARK, "\"abc");
+}
+
+static void test_parse_invalid_string_escape() {
+#if 0
+    TEST_ERROR(tinyjson::PARSE_INVALID_STRING_ESCAPE, "\"\\v\"");
+    TEST_ERROR(tinyjson::PARSE_INVALID_STRING_ESCAPE, "\"\\'\"");
+    TEST_ERROR(tinyjson::PARSE_INVALID_STRING_ESCAPE, "\"\\0\"");
+    TEST_ERROR(tinyjson::PARSE_INVALID_STRING_ESCAPE, "\"\\x12\"");
+#endif
+}
+
+static void test_parse_invalid_string_char() {
+#if 0
+    TEST_ERROR(LEPT_PARSE_INVALID_STRING_CHAR, "\"\x01\"");
+    TEST_ERROR(LEPT_PARSE_INVALID_STRING_CHAR, "\"\x1F\"");
+#endif
+}
+
+static void test_access_boolean() {
+    tinyjson::value v;
+    tiny_init(&v);
+    tinyjson::set_string(&v, "a", 1);
+    tinyjson::set_boolean(&v, 1);
+    EXPECT_TRUE(tinyjson::get_boolean(&v));
+    tinyjson::set_boolean(&v, 0);
+    EXPECT_FALSE(tinyjson::get_boolean(&v));
+    tinyjson::tiny_free(&v);
+}
+
+static void test_access_number() {
+    tinyjson::value v;
+    tiny_init(&v);
+    tinyjson::set_string(&v, "a", 1);
+    tinyjson::set_number(&v, 123.5);
+    EXPECT_EQ_DOUBLE(123.5, tinyjson::get_number(&v));
+    tinyjson::tiny_free(&v);
+}
+
+static void test_access_string() {
+    tinyjson::value v;
+    tiny_init(&v);
+    tinyjson::set_string(&v, "", 0);
+    EXPECT_EQ_STRING("", tinyjson::get_string(&v), tinyjson::get_string_len(&v));
+    tinyjson::set_string(&v, "Hello", 5);
+    EXPECT_EQ_STRING("Hello", tinyjson::get_string(&v), tinyjson::get_string_len(&v));
+    tinyjson::tiny_free(&v);
+}
+
 static void test_parse() {
     test_parse_null();
     test_parse_true();
@@ -143,6 +198,14 @@ static void test_parse() {
     test_parse_invalid_value();
     test_parse_root_not_singular();
     test_parse_number_too_big();
+    test_parse_missing_quotation_mark();
+    test_parse_invalid_string_escape();
+    test_parse_invalid_string_char();
+
+    test_access_string();
+    test_access_boolean();
+    test_access_number();
+    test_access_string();
 }
 
 int main() {
