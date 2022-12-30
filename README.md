@@ -19,7 +19,7 @@
 ## 代码
 ### tinyjson.h
 tinyJSON的头文件，包含对外的类型和 API 函数声明
-### tinyjson.c
+### tinyjson.cpp
 tinyJSON的实现文件，含有内部的类型声明和函数实现，此文件最终会编译成库
-### test.c
+### test.cpp
 使用测试驱动开发（test driven development, TDD），此文件包含测试程序，需要链接 `tinyJSON` 库
