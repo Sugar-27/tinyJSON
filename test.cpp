@@ -28,6 +28,14 @@ static int test_pass = 0;
 
 #define EXPECT_EQ_INT(expect, actual) EXPECT_EQ_BASE((expect) == (actual), expect, actual, "%d")
 
+#define TEST_ERROR(error, json)                                                                                        \
+    do {                                                                                                               \
+        tinyjson::value v;                                                                                             \
+        v.tiny_type = tinyjson::FALSE;                                                                                 \
+        EXPECT_EQ_INT(error, tinyjson::parse(&v, json));                                                               \
+        EXPECT_EQ_INT(tinyjson::TINYNULL, tinyjson::get_type(&v));                                                     \
+    } while (0)
+
 static void test_parse_null() {
     tinyjson::value v;
     v.tiny_type = tinyjson::FALSE;
@@ -50,35 +58,16 @@ static void test_parse_false() {
 }
 
 static void test_parse_expect_value() {
-    tinyjson::value v;
-
-    v.tiny_type = tinyjson::FALSE;
-    EXPECT_EQ_INT(tinyjson::PARSE_EXPECT_VALUE, tinyjson::parse(&v, ""));
-    EXPECT_EQ_INT(tinyjson::TINYNULL, tinyjson::get_type(&v));
-
-    v.tiny_type = tinyjson::FALSE;
-    EXPECT_EQ_INT(tinyjson::PARSE_EXPECT_VALUE, tinyjson::parse(&v, " "));
-    EXPECT_EQ_INT(tinyjson::TINYNULL, tinyjson::get_type(&v));
+    TEST_ERROR(tinyjson::PARSE_EXPECT_VALUE, "");
+    TEST_ERROR(tinyjson::PARSE_EXPECT_VALUE, " ");
 }
 
 static void test_parse_invalid_value() {
-    tinyjson::value v;
-
-    v.tiny_type = tinyjson::FALSE;
-    EXPECT_EQ_INT(tinyjson::PARSE_INVALID_VALUE, tinyjson::parse(&v, "nul"));
-    EXPECT_EQ_INT(tinyjson::TINYNULL, tinyjson::get_type(&v));
-
-    v.tiny_type = tinyjson::FALSE;
-    EXPECT_EQ_INT(tinyjson::PARSE_INVALID_VALUE, tinyjson::parse(&v, "?"));
-    EXPECT_EQ_INT(tinyjson::TINYNULL, tinyjson::get_type(&v));
+    TEST_ERROR(tinyjson::PARSE_INVALID_VALUE, "nul");
+    TEST_ERROR(tinyjson::PARSE_INVALID_VALUE, "?");
 }
 
-static void test_parse_root_not_singular() {
-    tinyjson::value v;
-    v.tiny_type = tinyjson::FALSE;
-    EXPECT_EQ_INT(tinyjson::PARSE_ROOT_NOT_SINGULAR, tinyjson::parse(&v, "null x"));
-    EXPECT_EQ_INT(tinyjson::TINYNULL, tinyjson::get_type(&v));
-}
+static void test_parse_root_not_singular() { TEST_ERROR(tinyjson::PARSE_ROOT_NOT_SINGULAR, "null x"); }
 
 static void test_parse() {
     test_parse_null();
