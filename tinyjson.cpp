@@ -38,6 +38,10 @@ inline bool ISDIGIT(char ch) { return ch >= '0' && ch <= '9'; }
 
 inline bool ISDIGIT1TO9(char ch) { return ch >= '1' && ch <= '9'; }
 
+inline bool ISALPHA_ATOF(char ch) { return ch >= 'A' && ch <= 'F'; }
+
+inline bool ISALPHA_aTOf(char ch) { return ch >= 'a' && ch <= 'f'; }
+
 static void* context_push(context* c, size_t size) {
     void* ret;
     assert(size > 0);
@@ -138,12 +142,57 @@ static int parse_number(context* c, value* v) {
     return PARSE_OK;
 }
 
+#define STRING_ERROR(ret)                                                                                              \
+    do {                                                                                                               \
+        c->top = head;                                                                                                 \
+        return ret;                                                                                                    \
+    } while (0)
+
+static const char* parse_hex4(const char* p, unsigned int* u) {
+    int i;
+    *u = 0;
+    for (i = 0; i < 4; ++i) {
+        char ch = *p++;
+        *u <<= 4;
+        if (ISDIGIT(ch)) {
+            *u |= ch - '0';
+        } else if (ISALPHA_ATOF(ch)) {
+            *u |= ch - 'A' + 0xa;
+        } else if (ISALPHA_aTOf(ch)) {
+            *u |= ch - 'a' + 0xa;
+        } else {
+            return nullptr;
+        }
+    }
+    return p;
+}
+
+static void encode_utf8(context* c, unsigned int u) {
+    if (u <= 0x7f) {
+        // 通过判断可以保证u是小于256的，不会产生截断，为避免编译器警告与上0xff，编译时编译器会进行优化忽略掉这个操作
+        PUTC(c, u & 0xff);
+    } else if (u <= 0x7ff) {
+        PUTC(c, 0xc0 | ((u >> 6) & 0xff));
+        PUTC(c, 0x80 | (u & 0x3f));
+    } else if (u <= 0xffff) {
+        PUTC(c, 0xe0 | ((u >> 12) & 0xff));
+        PUTC(c, 0x80 | ((u >> 6) & 0x3f));
+        PUTC(c, 0x80 | (u & 0x3f));
+    } else if (u <= 0x10ffff) {
+        PUTC(c, 0xf0 | ((u >> 18) & 0xff));
+        PUTC(c, 0x80 | ((u >> 12) & 0x3f));
+        PUTC(c, 0x80 | ((u >> 6) & 0x3f));
+        PUTC(c, 0x80 | (u & 0x3f));
+    }
+}
+
 static int parse_string(context* c, value* v) {
     size_t head = c->top, len;
     const char* p;
     EXPECT(c, '\"'); // 匹配到开始的双引号
     p = c->json;
     for (;;) {
+        unsigned int u, u2;
         char ch = *p++;
         switch (ch) {
         case '\"': // 匹配到结束的双引号
@@ -153,6 +202,30 @@ static int parse_string(context* c, value* v) {
             return PARSE_OK;
         case '\\': // 第一个\是转义负号，表示这个字符是'\'
             switch (*p++) {
+            case 'u': // 处理UTF-8编码
+                printf("Test utf-str: %s\n", p);
+                if (!(p = parse_hex4(p, &u))) {
+                    STRING_ERROR(PARSE_INVALID_UNICODE_HEX);
+                }
+                if (u >= 0xd800 && u <= 0xdbff) {
+                    if (*p++ != '\\') {
+                        STRING_ERROR(PARSE_INVALID_UNICODE_SURROGATE);
+                    }
+                    if (*p++ != 'u') {
+                        STRING_ERROR(PARSE_INVALID_UNICODE_SURROGATE);
+                    }
+                    if (!(p = parse_hex4(p, &u2))) {
+                        STRING_ERROR(PARSE_INVALID_UNICODE_HEX);
+                    }
+                    if (u2 < 0xdc00 || u2 > 0xdfff) {
+                        STRING_ERROR(PARSE_INVALID_UNICODE_SURROGATE);
+                    }
+                    printf("Test utf-hex: %x %x\n", u, u2);
+                    u = 0x10000 + (((u - 0xd800) << 10) | (u2 - 0xdc00));
+                    printf("Final utf-u: %x\n", u);
+                }
+                encode_utf8(c, u);
+                break;
             case '\"':
                 PUTC(c, '\"');
                 break;
@@ -178,18 +251,15 @@ static int parse_string(context* c, value* v) {
                 PUTC(c, '\t');
                 break;
             default:
-                c->top = head;
-                return PARSE_INVALID_STRING_ESCAPE;
+                STRING_ERROR(PARSE_INVALID_STRING_ESCAPE);
             }
             break;
 
         case '\0':
-            c->top = head;
-            return PARSE_MISS_QUOTATION_MARK;
+            STRING_ERROR(PARSE_MISS_QUOTATION_MARK);
         default:
             if ((unsigned char)ch < 0x20) {
-                c->top = head;
-                return PARSE_INVALID_STRING_CHAR;
+                STRING_ERROR(PARSE_INVALID_STRING_CHAR);
             }
             PUTC(c, ch);
         }
