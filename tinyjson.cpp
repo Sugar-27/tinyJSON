@@ -203,7 +203,6 @@ static int parse_string(context* c, value* v) {
         case '\\': // 第一个\是转义负号，表示这个字符是'\'
             switch (*p++) {
             case 'u': // 处理UTF-8编码
-                printf("Test utf-str: %s\n", p);
                 if (!(p = parse_hex4(p, &u))) {
                     STRING_ERROR(PARSE_INVALID_UNICODE_HEX);
                 }
@@ -220,9 +219,7 @@ static int parse_string(context* c, value* v) {
                     if (u2 < 0xdc00 || u2 > 0xdfff) {
                         STRING_ERROR(PARSE_INVALID_UNICODE_SURROGATE);
                     }
-                    printf("Test utf-hex: %x %x\n", u, u2);
                     u = 0x10000 + (((u - 0xd800) << 10) | (u2 - 0xdc00));
-                    printf("Final utf-u: %x\n", u);
                 }
                 encode_utf8(c, u);
                 break;
