@@ -23,24 +23,20 @@
 #include <iostream>
 
 namespace tinyjson {
-
-#define EXPECT(c, ch)                                                                                                  \
-    do {                                                                                                               \
-        assert(*c->json == (ch));                                                                                      \
-        c->json++;                                                                                                     \
-    } while (0)
-#define ISDIGIT(ch)     ((ch) >= '0' && (ch) <= '9')
-#define ISDIGIT1TO9(ch) ((ch) >= '1' && (ch) <= '9')
-#define PUTC(c, ch)                                                                                                    \
-    do {                                                                                                               \
-        *(char*)context_push(c, sizeof(char)) = (ch);                                                                  \
-    } while (0)
-
 typedef struct {
     const char* json;
     char* stack;
     size_t size, top;
 } context;
+
+inline void EXPECT(context* c, char ch) {
+    assert(*c->json == ch);
+    ++c->json;
+}
+
+inline bool ISDIGIT(char ch) { return ch >= '0' && ch <= '9'; }
+
+inline bool ISDIGIT1TO9(char ch) { return ch >= '1' && ch <= '9'; }
 
 static void* context_push(context* c, size_t size) {
     void* ret;
@@ -58,6 +54,8 @@ static void* context_push(context* c, size_t size) {
     c->top += size;
     return ret;
 }
+
+inline void PUTC(context* c, char ch) { *(char*)context_push(c, sizeof(char)) = ch; }
 
 static void* context_pop(context* c, size_t size) {
     assert(c->top >= size);

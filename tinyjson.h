@@ -12,13 +12,6 @@
 namespace tinyjson {
 const int PARSE_STACK_INIT_SIZE = 256;
 
-#define tiny_init(v)                                                                                                   \
-    do {                                                                                                               \
-        (v)->tiny_type = tinyjson::TINYNULL;                                                                           \
-    } while (0)
-
-#define set_null(v) tinyjson::tiny_free(v)
-
 // tinyjson支持的数据结构
 typedef enum { TINYNULL, FALSE, TRUE, NUMBER, STRING, ARRAY, OBJECT } type;
 
@@ -46,6 +39,8 @@ enum {
     PARSE_INVALID_STRING_CHAR
 };
 
+inline void tiny_init(value* v) { v->tiny_type = TINYNULL; }
+
 // JSON解析函数
 int parse(value* v, const char* json);
 
@@ -66,6 +61,7 @@ void set_string(value* v, const char* s, size_t len);
 
 // 内存释放函数
 void tiny_free(value* v);
+inline void set_null(value* v) { tiny_free(v); }
 
 } // namespace tinyjson
 
