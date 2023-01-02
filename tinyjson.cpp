@@ -73,38 +73,16 @@ static void parse_whitespace(context* c) {
     c->json = p;
 }
 
-// TODO: 减少冗余代码，重构parse相关函数
-
-/* null  = "null" */
-static int parse_null(context* c, value* v) {
-    EXPECT(c, 'n');
-    if (c->json[0] != 'u' || c->json[1] != 'l' || c->json[2] != 'l') {
-        return PARSE_INVALID_VALUE;
+static int parse_literal(context* c, value* v, const char* literal, type type) {
+    EXPECT(c, literal[0]);
+    size_t i;
+    for (i = 0; literal[i + 1]; ++i) {
+        if (c->json[i] != literal[i + 1]) {
+            return PARSE_INVALID_VALUE;
+        }
     }
-    c->json += 3;
-    v->tiny_type = TINYNULL;
-    return PARSE_OK;
-}
-
-/* true = "true" */
-static int parse_true(context* c, value* v) {
-    EXPECT(c, 't');
-    if (c->json[0] != 'r' || c->json[1] != 'u' || c->json[2] != 'e') {
-        return PARSE_INVALID_VALUE;
-    }
-    c->json += 3;
-    v->tiny_type = TRUE;
-    return PARSE_OK;
-}
-
-/* false = "false" */
-static int parse_false(context* c, value* v) {
-    EXPECT(c, 'f');
-    if (c->json[0] != 'a' || c->json[1] != 'l' || c->json[2] != 's' || c->json[3] != 'e') {
-        return PARSE_INVALID_VALUE;
-    }
-    c->json += 4;
-    v->tiny_type = FALSE;
+    c->json += i;
+    v->tiny_type = type;
     return PARSE_OK;
 }
 
@@ -220,15 +198,15 @@ static int parse_string(context* c, value* v) {
     }
 }
 
-/* value = null / false / true */
+/* value = null / false / true / number / string /*/
 static int parse_value(context* c, value* v) {
     switch (*c->json) {
     case 'n':
-        return parse_null(c, v);
+        return parse_literal(c, v, "null", TINYNULL);
     case 't':
-        return parse_true(c, v);
+        return parse_literal(c, v, "true", TRUE);
     case 'f':
-        return parse_false(c, v);
+        return parse_literal(c, v, "false", FALSE);
     default:
         return parse_number(c, v);
     case '"':
