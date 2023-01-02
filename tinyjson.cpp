@@ -4,6 +4,12 @@
  * @Describe:
  */
 
+// windows平台下使用CRT(C Runtime Library)进行内存泄漏检测，Linux/OSx用valgrind工具即可无需添加代码
+#ifdef _WINDOWS
+#define _CRTDBG_MAP_ALLOC
+#include <crtdbg.h>
+#endif
+
 #include "tinyjson.h"
 
 #include <asm-generic/errno-base.h>
@@ -159,20 +165,56 @@ static int parse_number(context* c, value* v) {
 static int parse_string(context* c, value* v) {
     size_t head = c->top, len;
     const char* p;
-    EXPECT(c, '\"');
+    EXPECT(c, '\"'); // 匹配到开始的双引号
     p = c->json;
     for (;;) {
         char ch = *p++;
         switch (ch) {
-        case '\"':
+        case '\"': // 匹配到结束的双引号
             len = c->top - head;
             set_string(v, (const char*)context_pop(c, len), len);
             c->json = p;
             return PARSE_OK;
+        case '\\': // 第一个\是转义负号，表示这个字符是'\'
+            switch (*p++) {
+            case '\"':
+                PUTC(c, '\"');
+                break;
+            case '\\':
+                PUTC(c, '\\');
+                break;
+            case '/':
+                PUTC(c, '/');
+                break;
+            case 'b':
+                PUTC(c, '\b');
+                break;
+            case 'f':
+                PUTC(c, '\f');
+                break;
+            case 'n':
+                PUTC(c, '\n');
+                break;
+            case 'r':
+                PUTC(c, '\r');
+                break;
+            case 't':
+                PUTC(c, '\t');
+                break;
+            default:
+                c->top = head;
+                return PARSE_INVALID_STRING_ESCAPE;
+            }
+            break;
+
         case '\0':
             c->top = head;
             return PARSE_MISS_QUOTATION_MARK;
         default:
+            if ((unsigned char)ch < 0x20) {
+                c->top = head;
+                return PARSE_INVALID_STRING_CHAR;
+            }
             PUTC(c, ch);
         }
     }
@@ -214,6 +256,34 @@ int parse(value* v, const char* json) {
             ret = PARSE_ROOT_NOT_SINGULAR;
         }
     }
+#if 0
+    switch (ret) {
+    case PARSE_OK:
+        printf("PARSE_OK\n");
+        break;
+    case PARSE_EXPECT_VALUE:
+        printf("PARSE_EXPECT_VALUE\n");
+        break;
+    case PARSE_INVALID_VALUE:
+        printf("PARSE_INVALID_VALUE\n");
+        break;
+    case PARSE_ROOT_NOT_SINGULAR:
+        printf("PARSE_ROOT_NOT_SINGULAR\n");
+        break;
+    case PARSE_NUMBER_TOO_BIG:
+        printf("PARSE_NUMBER_TOO_BIG\n");
+        break;
+    case PARSE_MISS_QUOTATION_MARK:
+        printf("PARSE_MISS_QUOTATION_MARK\n");
+        break;
+    case PARSE_INVALID_STRING_ESCAPE:
+        printf("PARSE_INVALID_STRING_ESCAPE\n");
+        break;
+    case PARSE_INVALID_STRING_CHAR:
+        printf("PARSE_INVALID_STRING_CHAR\n");
+        break;
+    }
+#endif
     assert(c.top == 0);
     free(c.stack);
 

@@ -3,6 +3,12 @@
  * @Date: 2022-12-30 11:38:48
  * @Describe:tinyJSON的单元测试框架
  */
+// windows平台下使用CRT(C Runtime Library)进行内存泄漏检测，Linux/OSx用valgrind工具即可无需添加代码
+#ifdef _WINDOWS
+#define _CRTDBG_MAP_ALLOC
+#include <crtdbg.h>
+#endif
+
 #include "tinyjson.h"
 
 #include <iostream>
@@ -36,39 +42,59 @@ static int test_pass = 0;
 #define TEST_ERROR(error, json)                                                                                        \
     do {                                                                                                               \
         tinyjson::value v;                                                                                             \
-        v.tiny_type = tinyjson::FALSE;                                                                                 \
+        tiny_init(&v);                                                                                                 \
+        tinyjson::set_boolean(&v, 0);                                                                                  \
         EXPECT_EQ_INT(error, tinyjson::parse(&v, json));                                                               \
         EXPECT_EQ_INT(tinyjson::TINYNULL, tinyjson::get_type(&v));                                                     \
+        tinyjson::tiny_free(&v);                                                                                       \
     } while (0)
 
 #define TEST_NUMBER(expect, json)                                                                                      \
     do {                                                                                                               \
         tinyjson::value v;                                                                                             \
+        tiny_init(&v);                                                                                                 \
         auto res = tinyjson::parse(&v, json);                                                                          \
         EXPECT_EQ_INT(tinyjson::PARSE_OK, res);                                                                        \
         EXPECT_EQ_INT(tinyjson::NUMBER, tinyjson::get_type(&v));                                                       \
         EXPECT_EQ_DOUBLE(expect, tinyjson::get_number(&v));                                                            \
+        tinyjson::tiny_free(&v);                                                                                       \
+    } while (0)
+
+#define TEST_STRING(expect, json)                                                                                      \
+    do {                                                                                                               \
+        tinyjson::value v;                                                                                             \
+        tiny_init(&v);                                                                                                 \
+        EXPECT_EQ_INT(tinyjson::PARSE_OK, tinyjson::parse(&v, json));                                                  \
+        EXPECT_EQ_INT(tinyjson::STRING, tinyjson::get_type(&v));                                                       \
+        EXPECT_EQ_STRING(expect, tinyjson::get_string(&v), tinyjson::get_string_len(&v));                              \
+        tinyjson::tiny_free(&v);                                                                                       \
     } while (0)
 
 static void test_parse_null() {
     tinyjson::value v;
-    v.tiny_type = tinyjson::FALSE;
+    tiny_init(&v);
+    tinyjson::set_boolean(&v, 0);
     EXPECT_EQ_INT(tinyjson::PARSE_OK, tinyjson::parse(&v, "null"));
     EXPECT_EQ_INT(tinyjson::TINYNULL, tinyjson::get_type(&v));
+    tinyjson::tiny_free(&v);
 }
 
 static void test_parse_true() {
     tinyjson::value v;
-    v.tiny_type = tinyjson::FALSE;
+    tiny_init(&v);
+    tinyjson::set_boolean(&v, 0);
     EXPECT_EQ_INT(tinyjson::PARSE_OK, tinyjson::parse(&v, "true"));
     EXPECT_EQ_INT(tinyjson::TRUE, tinyjson::get_type(&v));
+    tinyjson::tiny_free(&v);
 }
 
 static void test_parse_false() {
     tinyjson::value v;
-    v.tiny_type = tinyjson::TRUE;
+    tiny_init(&v);
+    tinyjson::set_boolean(&v, 1);
     EXPECT_EQ_INT(tinyjson::PARSE_OK, tinyjson::parse(&v, "false"));
     EXPECT_EQ_INT(tinyjson::FALSE, tinyjson::get_type(&v));
+    tinyjson::tiny_free(&v);
 }
 
 static void test_parse_number() {
@@ -101,6 +127,13 @@ static void test_parse_number() {
     TEST_NUMBER(-2.2250738585072014e-308, "-2.2250738585072014e-308");
     TEST_NUMBER(1.7976931348623157e+308, "1.7976931348623157e+308"); /* Max double */
     TEST_NUMBER(-1.7976931348623157e+308, "-1.7976931348623157e+308");
+}
+
+static void test_parse_string() {
+    TEST_STRING("", "\"\"");
+    TEST_STRING("Hello", "\"Hello\"");
+    TEST_STRING("Hello\nWorld", "\"Hello\\nWorld\"");
+    TEST_STRING("\" \\ / \b \f \n \r \t", "\"\\\" \\\\ \\/ \\b \\f \\n \\r \\t\"");
 }
 
 static void test_parse_expect_value() {
@@ -144,21 +177,18 @@ static void test_parse_missing_quotation_mark() {
 }
 
 static void test_parse_invalid_string_escape() {
-#if 0
     TEST_ERROR(tinyjson::PARSE_INVALID_STRING_ESCAPE, "\"\\v\"");
     TEST_ERROR(tinyjson::PARSE_INVALID_STRING_ESCAPE, "\"\\'\"");
     TEST_ERROR(tinyjson::PARSE_INVALID_STRING_ESCAPE, "\"\\0\"");
     TEST_ERROR(tinyjson::PARSE_INVALID_STRING_ESCAPE, "\"\\x12\"");
-#endif
 }
 
 static void test_parse_invalid_string_char() {
-#if 0
-    TEST_ERROR(LEPT_PARSE_INVALID_STRING_CHAR, "\"\x01\"");
-    TEST_ERROR(LEPT_PARSE_INVALID_STRING_CHAR, "\"\x1F\"");
-#endif
+    TEST_ERROR(tinyjson::PARSE_INVALID_STRING_CHAR, "\"\x01\"");
+    TEST_ERROR(tinyjson::PARSE_INVALID_STRING_CHAR, "\"\x1F\"");
 }
 
+// 测试非字符串的类型时，先set_string再去设置其他类型，这样可以查看是否调用了free函数
 static void test_access_boolean() {
     tinyjson::value v;
     tiny_init(&v);
@@ -179,6 +209,15 @@ static void test_access_number() {
     tinyjson::tiny_free(&v);
 }
 
+static void test_access_null() {
+    tinyjson::value v;
+    tiny_init(&v);
+    tinyjson::set_string(&v, "a", 1);
+    set_null(&v);
+    EXPECT_EQ_INT(tinyjson::TINYNULL, tinyjson::get_type(&v));
+    tinyjson::tiny_free(&v);
+}
+
 static void test_access_string() {
     tinyjson::value v;
     tiny_init(&v);
@@ -194,6 +233,7 @@ static void test_parse() {
     test_parse_true();
     test_parse_false();
     test_parse_number();
+    test_parse_string();
     test_parse_expect_value();
     test_parse_invalid_value();
     test_parse_root_not_singular();
@@ -202,13 +242,16 @@ static void test_parse() {
     test_parse_invalid_string_escape();
     test_parse_invalid_string_char();
 
+    test_access_null();
     test_access_string();
     test_access_boolean();
     test_access_number();
-    test_access_string();
 }
 
 int main() {
+#ifdef _WINDOWS
+    _CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
+#endif
     test_parse();
     printf("%d/%d (%3.2f%%) passed\n", test_pass, test_count, test_pass * 100.0 / test_count);
     return main_ret;
