@@ -47,7 +47,7 @@ static void* context_push(context* c, size_t size) {
     assert(size > 0);
     if (c->top + size >= c->size) {
         if (c->size == 0) {
-            c->size = tinyjson::PARSE_STACK_INIT_SIZE;
+            c->size = PARSE_STACK_INIT_SIZE;
         }
         while (c->top + size >= c->size) {
             c->size += c->size >> 1; // c->size * 1.5
@@ -263,6 +263,57 @@ static int parse_string(context* c, value* v) {
     }
 }
 
+static int parse_value(context* c, value* v); // 前置声明
+static int parse_array(context* c, value* v) {
+    size_t i, size = 0;
+    int ret;
+    EXPECT(c, '[');
+    // 考虑到数组的空格分割特性，在三个位置添加跳过空格：检测到'['后，检测到','后，parse完元素后
+    parse_whitespace(c);
+    if (*c->json == ']') {
+        c->json++;
+        v->tiny_type = ARRAY;
+        v->u.a.size = 0;
+        v->u.a.e = nullptr;
+        return PARSE_OK;
+    }
+    for (;;) {
+        value tmp_v;
+        tiny_init(&tmp_v);
+        if ((ret = parse_value(c, &tmp_v)) != PARSE_OK) {
+            break;
+        }
+        parse_whitespace(c);
+        /* 使用临时value变量存储解析结果再将其内存拷贝到c中而不是直接在c中的内存直接存储变量的原因：
+        因为在存储value的过程中会调用contex_push，如果发现堆栈满了会调用realloc函数，而这时如果直接在c中的内存存储变量的话，这个指针此时就已经是悬空指针，
+        后面当需要把解析结果存储到对应的内存时因为这个指针已经变成了悬空指针，就会发生错误
+        */
+        memcpy(context_push(c, sizeof(value)), &tmp_v, sizeof(value));
+        ++size;
+        if (*c->json == ',') {
+            ++c->json;
+            parse_whitespace(c);
+        } else if (*c->json == ']') {
+            ++c->json;
+            v->tiny_type = ARRAY;
+            v->u.a.size = size;
+            size *= sizeof(value);
+            memcpy(v->u.a.e = (value*)malloc(size), context_pop(c, size), size);
+            return PARSE_OK;
+        } else {
+            ret = PARSE_MISS_COMMA_OR_SQUARE_BRACKET;
+            break;
+        }
+    }
+
+    // pop堆栈中的内存并释放这块内存
+    for (i = 0; i < size; ++i) {
+        tiny_free((value*)context_pop(c, sizeof(value)));
+    }
+
+    return ret;
+}
+
 /* value = null / false / true / number / string /*/
 static int parse_value(context* c, value* v) {
     switch (*c->json) {
@@ -276,6 +327,8 @@ static int parse_value(context* c, value* v) {
         return parse_number(c, v);
     case '"':
         return parse_string(c, v);
+    case '[':
+        return parse_array(c, v);
     case '\0':
         return PARSE_EXPECT_VALUE;
     }
@@ -370,6 +423,17 @@ size_t get_string_len(const value* v) {
     return v->u.s.len;
 }
 
+size_t get_array_size(const value* v) {
+    assert(v != nullptr && v->tiny_type == ARRAY);
+    return v->u.a.size;
+}
+
+value* get_array_element(const value* v, size_t index) {
+    assert(v != nullptr && v->tiny_type == ARRAY);
+    assert(index < v->u.a.size);
+    return &v->u.a.e[index];
+}
+
 void set_string(value* v, const char* s, size_t len) {
     assert(v != nullptr && (s != nullptr || len == 0));
     tiny_free(v);
@@ -382,8 +446,19 @@ void set_string(value* v, const char* s, size_t len) {
 
 void tiny_free(value* v) {
     assert(v != nullptr);
-    if (v->tiny_type == STRING) {
+    size_t i;
+    switch (v->tiny_type) {
+    case STRING:
         free(v->u.s.s);
+        break;
+    case ARRAY:
+        for (i = 0; i < v->u.a.size; ++i) {
+            tiny_free(&v->u.a.e[i]);
+        }
+        free(v->u.a.e);
+        break;
+    default:
+        break;
     }
     v->tiny_type = TINYNULL;
 }

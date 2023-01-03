@@ -4,6 +4,7 @@
  * @Describe:tinyJSON的单元测试框架
  */
 // windows平台下使用CRT(C Runtime Library)进行内存泄漏检测，Linux/OSx用valgrind工具即可无需添加代码
+#include <cstddef>
 #ifdef _WINDOWS
 #define _CRTDBG_MAP_ALLOC
 #include <crtdbg.h>
@@ -38,6 +39,11 @@ static int test_pass = 0;
     EXPECT_EQ_BASE(sizeof(expect) - 1 == (alength) && memcmp(expect, actual, alength) == 0, expect, actual, "%s")
 #define EXPECT_TRUE(actual)  EXPECT_EQ_BASE((actual) != 0, "true", "false", "%s")
 #define EXPECT_FALSE(actual) EXPECT_EQ_BASE((actual) == 0, "false", "true", "%s")
+#if defined(_MSC_VER)
+#define EXPECT_EQ_SIZE_T(expect, actual) EXPECT_EQ_BASE((expect) == (actual), (size_t)expect, (size_t)actual, "%Iu")
+#else
+#define EXPECT_EQ_SIZE_T(expect, actual) EXPECT_EQ_BASE((expect) == (actual), (size_t)expect, (size_t)actual, "%zu")
+#endif
 
 #define TEST_ERROR(error, json)                                                                                        \
     do {                                                                                                               \
@@ -135,11 +141,53 @@ static void test_parse_string() {
     TEST_STRING("Hello\nWorld", "\"Hello\\nWorld\"");
     TEST_STRING("\" \\ / \b \f \n \r \t", "\"\\\" \\\\ \\/ \\b \\f \\n \\r \\t\"");
     TEST_STRING("Hello\0World", "\"Hello\\u0000World\"");
-    TEST_STRING("\x24", "\"\\u0024\"");         /* Dollar sign U+0024 */
-    TEST_STRING("\xC2\xA2", "\"\\u00A2\"");     /* Cents sign U+00A2 */
-    TEST_STRING("\xE2\x82\xAC", "\"\\u20AC\""); /* Euro sign U+20AC */
-    TEST_STRING("\xF0\x9D\x84\x9E", "\"\\uD834\\uDD1E\"");  /* G clef sign U+1D11E */
-    TEST_STRING("\xF0\x9D\x84\x9E", "\"\\ud834\\udd1e\"");  /* G clef sign U+1D11E */
+    TEST_STRING("\x24", "\"\\u0024\"");                    /* Dollar sign U+0024 */
+    TEST_STRING("\xC2\xA2", "\"\\u00A2\"");                /* Cents sign U+00A2 */
+    TEST_STRING("\xE2\x82\xAC", "\"\\u20AC\"");            /* Euro sign U+20AC */
+    TEST_STRING("\xF0\x9D\x84\x9E", "\"\\uD834\\uDD1E\""); /* G clef sign U+1D11E */
+    TEST_STRING("\xF0\x9D\x84\x9E", "\"\\ud834\\udd1e\""); /* G clef sign U+1D11E */
+}
+
+static void test_parse_array() {
+    size_t i, j;
+    tinyjson::value v;
+
+    tinyjson::tiny_init(&v);
+    EXPECT_EQ_INT(tinyjson::PARSE_OK, tinyjson::parse(&v, "[ ]"));
+    EXPECT_EQ_INT(tinyjson::ARRAY, tinyjson::get_type(&v));
+    EXPECT_EQ_SIZE_T(0, tinyjson::get_array_size(&v));
+    tinyjson::tiny_free(&v);
+
+    tinyjson::tiny_init(&v);
+    EXPECT_EQ_INT(tinyjson::PARSE_OK, tinyjson::parse(&v, "[ null , false , true , 123 , \"abc\" ]"));
+    EXPECT_EQ_INT(tinyjson::ARRAY, tinyjson::get_type(&v));
+    EXPECT_EQ_SIZE_T(5, tinyjson::get_array_size(&v));
+    EXPECT_EQ_INT(tinyjson::TINYNULL, tinyjson::get_type(tinyjson::get_array_element(&v, 0)));
+    EXPECT_EQ_INT(tinyjson::FALSE, tinyjson::get_type(tinyjson::get_array_element(&v, 1)));
+    EXPECT_EQ_INT(tinyjson::TRUE, tinyjson::get_type(tinyjson::get_array_element(&v, 2)));
+    EXPECT_EQ_INT(tinyjson::NUMBER, tinyjson::get_type(tinyjson::get_array_element(&v, 3)));
+    EXPECT_EQ_INT(tinyjson::STRING, tinyjson::get_type(tinyjson::get_array_element(&v, 4)));
+    EXPECT_EQ_DOUBLE(123.0, tinyjson::get_number(tinyjson::get_array_element(&v, 3)));
+    EXPECT_EQ_STRING("abc",
+                     tinyjson::get_string(tinyjson::get_array_element(&v, 4)),
+                     tinyjson::get_string_len(tinyjson::get_array_element(&v, 4)));
+    tinyjson::tiny_free(&v);
+
+    tinyjson::tiny_init(&v);
+    EXPECT_EQ_INT(tinyjson::PARSE_OK, tinyjson::parse(&v, "[ [ ] , [ 0 ] , [ 0 , 1 ] , [ 0 , 1 , 2 ] ]"));
+    EXPECT_EQ_INT(tinyjson::ARRAY, tinyjson::get_type(&v));
+    EXPECT_EQ_SIZE_T(4, tinyjson::get_array_size(&v));
+    for (i = 0; i < 4; i++) {
+        tinyjson::value* a = tinyjson::get_array_element(&v, i);
+        EXPECT_EQ_INT(tinyjson::ARRAY, tinyjson::get_type(a));
+        EXPECT_EQ_SIZE_T(i, tinyjson::get_array_size(a));
+        for (j = 0; j < i; j++) {
+            tinyjson::value* e = tinyjson::get_array_element(a, j);
+            EXPECT_EQ_INT(tinyjson::NUMBER, tinyjson::get_type(e));
+            EXPECT_EQ_DOUBLE((double)j, tinyjson::get_number(e));
+        }
+    }
+    tinyjson::tiny_free(&v);
 }
 
 static void test_parse_expect_value() {
@@ -161,6 +209,10 @@ static void test_parse_invalid_value() {
     TEST_ERROR(tinyjson::PARSE_INVALID_VALUE, "inf");
     TEST_ERROR(tinyjson::PARSE_INVALID_VALUE, "NAN");
     TEST_ERROR(tinyjson::PARSE_INVALID_VALUE, "nan");
+
+    /* invalid value in array */
+    TEST_ERROR(tinyjson::PARSE_INVALID_VALUE, "[1,]");
+    TEST_ERROR(tinyjson::PARSE_INVALID_VALUE, "[\"a\", nul]");
 }
 
 static void test_parse_root_not_singular() {
@@ -218,6 +270,13 @@ static void test_parse_invalid_unicode_surrogate() {
     TEST_ERROR(tinyjson::PARSE_INVALID_UNICODE_SURROGATE, "\"\\uD800\\uE000\"");
 }
 
+static void test_parse_miss_comma_or_square_bracket() {
+    TEST_ERROR(tinyjson::PARSE_MISS_COMMA_OR_SQUARE_BRACKET, "[1");
+    TEST_ERROR(tinyjson::PARSE_MISS_COMMA_OR_SQUARE_BRACKET, "[1}");
+    TEST_ERROR(tinyjson::PARSE_MISS_COMMA_OR_SQUARE_BRACKET, "[1 2");
+    TEST_ERROR(tinyjson::PARSE_MISS_COMMA_OR_SQUARE_BRACKET, "[[]");
+}
+
 // 测试非字符串的类型时，先set_string再去设置其他类型，这样可以查看是否调用了free函数
 static void test_access_boolean() {
     tinyjson::value v;
@@ -264,6 +323,7 @@ static void test_parse() {
     test_parse_false();
     test_parse_number();
     test_parse_string();
+    test_parse_array();
     test_parse_expect_value();
     test_parse_invalid_value();
     test_parse_root_not_singular();
@@ -273,6 +333,7 @@ static void test_parse() {
     test_parse_invalid_string_char();
     test_parse_invalid_unicode_hex();
     test_parse_invalid_unicode_surrogate();
+    test_parse_miss_comma_or_square_bracket();
 }
 
 static void test_access() {

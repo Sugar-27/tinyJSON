@@ -14,10 +14,13 @@ const int PARSE_STACK_INIT_SIZE = 256;
 
 // tinyjson支持的数据结构
 typedef enum { TINYNULL, FALSE, TRUE, NUMBER, STRING, ARRAY, OBJECT } type;
-
-typedef struct {
+struct value {
     // 使用union来节省内存空间
     union {
+        struct {
+            value* e;
+            size_t size;
+        } a; // array
         struct {
             char* s;
             size_t len;
@@ -25,7 +28,7 @@ typedef struct {
         double n; // number
     } u;
     type tiny_type;
-} value;
+};
 
 // 返回值定义
 enum {
@@ -38,7 +41,8 @@ enum {
     PARSE_INVALID_STRING_ESCAPE,
     PARSE_INVALID_STRING_CHAR,
     PARSE_INVALID_UNICODE_HEX,
-    PARSE_INVALID_UNICODE_SURROGATE
+    PARSE_INVALID_UNICODE_SURROGATE,
+    PARSE_MISS_COMMA_OR_SQUARE_BRACKET
 };
 
 inline void tiny_init(value* v) { v->tiny_type = TINYNULL; }
@@ -60,6 +64,10 @@ const char* get_string(const value* v);
 size_t get_string_len(const value* v);
 // 动态分配内存并将字符串存入到value中
 void set_string(value* v, const char* s, size_t len);
+// 获取数组大小
+size_t get_array_size(const value* v);
+// 获取数组元素
+value* get_array_element(const value* v, size_t index);
 
 // 内存释放函数
 void tiny_free(value* v);
