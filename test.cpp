@@ -190,6 +190,67 @@ static void test_parse_array() {
     tinyjson::tiny_free(&v);
 }
 
+static void test_parse_object() {
+    tinyjson::value v;
+    size_t i;
+
+    tinyjson::tiny_init(&v);
+    EXPECT_EQ_INT(tinyjson::PARSE_OK, tinyjson::parse(&v, " { } "));
+    EXPECT_EQ_INT(tinyjson::OBJECT, tinyjson::get_type(&v));
+    EXPECT_EQ_SIZE_T(0, tinyjson::get_object_size(&v));
+    tinyjson::tiny_free(&v);
+
+    tinyjson::tiny_init(&v);
+    EXPECT_EQ_INT(tinyjson::PARSE_OK,
+                  tinyjson::parse(&v,
+                                  " { "
+                                  "\"n\" : null , "
+                                  "\"f\" : false , "
+                                  "\"t\" : true , "
+                                  "\"i\" : 123 , "
+                                  "\"s\" : \"abc\", "
+                                  "\"a\" : [ 1, 2, 3 ],"
+                                  "\"o\" : { \"1\" : 1, \"2\" : 2, \"3\" : 3 }"
+                                  " } "));
+    EXPECT_EQ_INT(tinyjson::OBJECT, tinyjson::get_type(&v));
+    EXPECT_EQ_SIZE_T(7, tinyjson::get_object_size(&v));
+    EXPECT_EQ_STRING("n", tinyjson::get_object_key(&v, 0), tinyjson::get_object_key_length(&v, 0));
+    EXPECT_EQ_INT(tinyjson::TINYNULL, tinyjson::get_type(tinyjson::get_object_value(&v, 0)));
+    EXPECT_EQ_STRING("f", tinyjson::get_object_key(&v, 1), tinyjson::get_object_key_length(&v, 1));
+    EXPECT_EQ_INT(tinyjson::FALSE, tinyjson::get_type(tinyjson::get_object_value(&v, 1)));
+    EXPECT_EQ_STRING("t", tinyjson::get_object_key(&v, 2), tinyjson::get_object_key_length(&v, 2));
+    EXPECT_EQ_INT(tinyjson::TRUE, tinyjson::get_type(tinyjson::get_object_value(&v, 2)));
+    EXPECT_EQ_STRING("i", tinyjson::get_object_key(&v, 3), tinyjson::get_object_key_length(&v, 3));
+    EXPECT_EQ_INT(tinyjson::NUMBER, tinyjson::get_type(tinyjson::get_object_value(&v, 3)));
+    EXPECT_EQ_DOUBLE(123.0, tinyjson::get_number(tinyjson::get_object_value(&v, 3)));
+    EXPECT_EQ_STRING("s", tinyjson::get_object_key(&v, 4), tinyjson::get_object_key_length(&v, 4));
+    EXPECT_EQ_INT(tinyjson::STRING, tinyjson::get_type(tinyjson::get_object_value(&v, 4)));
+    EXPECT_EQ_STRING("abc",
+                     tinyjson::get_string(tinyjson::get_object_value(&v, 4)),
+                     tinyjson::get_string_len(tinyjson::get_object_value(&v, 4)));
+    EXPECT_EQ_STRING("a", tinyjson::get_object_key(&v, 5), tinyjson::get_object_key_length(&v, 5));
+    EXPECT_EQ_INT(tinyjson::ARRAY, tinyjson::get_type(tinyjson::get_object_value(&v, 5)));
+    EXPECT_EQ_SIZE_T(3, tinyjson::get_array_size(tinyjson::get_object_value(&v, 5)));
+    for (i = 0; i < 3; i++) {
+        tinyjson::value* e = tinyjson::get_array_element(tinyjson::get_object_value(&v, 5), i);
+        EXPECT_EQ_INT(tinyjson::NUMBER, tinyjson::get_type(e));
+        EXPECT_EQ_DOUBLE(i + 1.0, tinyjson::get_number(e));
+    }
+    EXPECT_EQ_STRING("o", tinyjson::get_object_key(&v, 6), tinyjson::get_object_key_length(&v, 6));
+    {
+        tinyjson::value* o = tinyjson::get_object_value(&v, 6);
+        EXPECT_EQ_INT(tinyjson::OBJECT, tinyjson::get_type(o));
+        for (i = 0; i < 3; i++) {
+            tinyjson::value* ov = tinyjson::get_object_value(o, i);
+            EXPECT_TRUE('1' + i == tinyjson::get_object_key(o, i)[0]);
+            EXPECT_EQ_SIZE_T(1, tinyjson::get_object_key_length(o, i));
+            EXPECT_EQ_INT(tinyjson::NUMBER, tinyjson::get_type(ov));
+            EXPECT_EQ_DOUBLE(i + 1.0, tinyjson::get_number(ov));
+        }
+    }
+    tinyjson::tiny_free(&v);
+}
+
 static void test_parse_expect_value() {
     TEST_ERROR(tinyjson::PARSE_EXPECT_VALUE, "");
     TEST_ERROR(tinyjson::PARSE_EXPECT_VALUE, " ");
@@ -277,6 +338,29 @@ static void test_parse_miss_comma_or_square_bracket() {
     TEST_ERROR(tinyjson::PARSE_MISS_COMMA_OR_SQUARE_BRACKET, "[[]");
 }
 
+static void test_parse_miss_key() {
+    TEST_ERROR(tinyjson::PARSE_MISS_KEY, "{:1,");
+    TEST_ERROR(tinyjson::PARSE_MISS_KEY, "{1:1,");
+    TEST_ERROR(tinyjson::PARSE_MISS_KEY, "{true:1,");
+    TEST_ERROR(tinyjson::PARSE_MISS_KEY, "{false:1,");
+    TEST_ERROR(tinyjson::PARSE_MISS_KEY, "{null:1,");
+    TEST_ERROR(tinyjson::PARSE_MISS_KEY, "{[]:1,");
+    TEST_ERROR(tinyjson::PARSE_MISS_KEY, "{{}:1,");
+    TEST_ERROR(tinyjson::PARSE_MISS_KEY, "{\"a\":1,");
+}
+
+static void test_parse_miss_colon() {
+    TEST_ERROR(tinyjson::PARSE_MISS_COLON, "{\"a\"}");
+    TEST_ERROR(tinyjson::PARSE_MISS_COLON, "{\"a\",\"b\"}");
+}
+
+static void test_parse_miss_comma_or_curly_bracket() {
+    TEST_ERROR(tinyjson::PARSE_MISS_COMMA_OR_CURLY_BRACKET, "{\"a\":1");
+    TEST_ERROR(tinyjson::PARSE_MISS_COMMA_OR_CURLY_BRACKET, "{\"a\":1]");
+    TEST_ERROR(tinyjson::PARSE_MISS_COMMA_OR_CURLY_BRACKET, "{\"a\":1 \"b\"");
+    TEST_ERROR(tinyjson::PARSE_MISS_COMMA_OR_CURLY_BRACKET, "{\"a\":{}");
+}
+
 // 测试非字符串的类型时，先set_string再去设置其他类型，这样可以查看是否调用了free函数
 static void test_access_boolean() {
     tinyjson::value v;
@@ -324,6 +408,8 @@ static void test_parse() {
     test_parse_number();
     test_parse_string();
     test_parse_array();
+    test_parse_object();
+
     test_parse_expect_value();
     test_parse_invalid_value();
     test_parse_root_not_singular();
@@ -334,6 +420,9 @@ static void test_parse() {
     test_parse_invalid_unicode_hex();
     test_parse_invalid_unicode_surrogate();
     test_parse_miss_comma_or_square_bracket();
+    test_parse_miss_key();
+    test_parse_miss_colon();
+    test_parse_miss_comma_or_curly_bracket();
 }
 
 static void test_access() {

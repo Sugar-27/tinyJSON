@@ -14,9 +14,17 @@ const int PARSE_STACK_INIT_SIZE = 256;
 
 // tinyjson支持的数据结构
 typedef enum { TINYNULL, FALSE, TRUE, NUMBER, STRING, ARRAY, OBJECT } type;
+
+typedef struct value value;
+typedef struct member member;
+
 struct value {
     // 使用union来节省内存空间
     union {
+        struct {
+            member* m;
+            size_t size;
+        } o;
         struct {
             value* e;
             size_t size;
@@ -28,6 +36,12 @@ struct value {
         double n; // number
     } u;
     type tiny_type;
+};
+
+struct member {
+    char* k;
+    size_t klen;
+    value v;
 };
 
 // 返回值定义
@@ -42,7 +56,10 @@ enum {
     PARSE_INVALID_STRING_CHAR,
     PARSE_INVALID_UNICODE_HEX,
     PARSE_INVALID_UNICODE_SURROGATE,
-    PARSE_MISS_COMMA_OR_SQUARE_BRACKET
+    PARSE_MISS_COMMA_OR_SQUARE_BRACKET,
+    PARSE_MISS_KEY,
+    PARSE_MISS_COLON,
+    PARSE_MISS_COMMA_OR_CURLY_BRACKET
 };
 
 inline void tiny_init(value* v) { v->tiny_type = TINYNULL; }
@@ -68,6 +85,14 @@ void set_string(value* v, const char* s, size_t len);
 size_t get_array_size(const value* v);
 // 获取数组元素
 value* get_array_element(const value* v, size_t index);
+// 获取json对象大小
+size_t get_object_size(const value* v);
+// 获取json对象的键
+const char* get_object_key(const value* v, size_t index);
+// 获取json对象键的长度
+size_t get_object_key_length(const value* v, size_t index);
+// 获取json对象对应的json_value指针
+value* get_object_value(const value* v, size_t index);
 
 // 内存释放函数
 void tiny_free(value* v);

@@ -186,8 +186,8 @@ static void encode_utf8(context* c, unsigned int u) {
     }
 }
 
-static int parse_string(context* c, value* v) {
-    size_t head = c->top, len;
+static int parse_string_raw(context* c, char** str, size_t* len) {
+    size_t head = c->top;
     const char* p;
     EXPECT(c, '\"'); // 匹配到开始的双引号
     p = c->json;
@@ -196,8 +196,8 @@ static int parse_string(context* c, value* v) {
         char ch = *p++;
         switch (ch) {
         case '\"': // 匹配到结束的双引号
-            len = c->top - head;
-            set_string(v, (const char*)context_pop(c, len), len);
+            *len = c->top - head;
+            *str = (char*)context_pop(c, *len);
             c->json = p;
             return PARSE_OK;
         case '\\': // 第一个\是转义负号，表示这个字符是'\'
@@ -263,6 +263,16 @@ static int parse_string(context* c, value* v) {
     }
 }
 
+static int parse_string(context* c, value* v) {
+    char* s;
+    int ret;
+    size_t len;
+    if ((ret = parse_string_raw(c, &s, &len)) == PARSE_OK) {
+        set_string(v, s, len);
+    }
+    return ret;
+}
+
 static int parse_value(context* c, value* v); // 前置声明
 static int parse_array(context* c, value* v) {
     size_t i, size = 0;
@@ -314,6 +324,83 @@ static int parse_array(context* c, value* v) {
     return ret;
 }
 
+static int parse_object(context* c, value* v) {
+    size_t size;
+    member m;
+    int ret;
+    EXPECT(c, '{');
+    parse_whitespace(c);
+    if (*c->json == '}') {
+        c->json++;
+        v->tiny_type = OBJECT;
+        v->u.o.size = 0;
+        v->u.o.m = nullptr;
+        return PARSE_OK;
+    }
+    m.k = nullptr;
+    size = 0;
+    for (;;) {
+        char* str;
+        tiny_init(&m.v);
+        // parse key
+        if (*c->json != '"') {
+            ret = PARSE_MISS_KEY;
+            break;
+        }
+        if ((ret = parse_string_raw(c, &str, &m.klen)) != PARSE_OK) {
+            break;
+        }
+        memcpy(m.k = (char*)malloc(m.klen + 1), str, m.klen);
+        m.k[m.klen] = '\0';
+
+        // parse ws colon ws
+        parse_whitespace(c);
+        if (*c->json != ':') {
+            ret = PARSE_MISS_COLON;
+            break;
+        }
+        c->json++;
+        parse_whitespace(c);
+
+        // parse value
+        if ((ret = parse_value(c, &m.v)) != PARSE_OK) {
+            break;
+        }
+        memcpy(context_push(c, sizeof(member)), &m, sizeof(member));
+        ++size;
+        m.k = nullptr; // 所有值转移到栈上
+
+        // parse ws [comma | right-curly-brace] ws，逗号或者右花括号
+        parse_whitespace(c);
+        if (*c->json == ',') {
+            c->json++;
+            parse_whitespace(c);
+        } else if (*c->json == '}') {
+            c->json++;
+            size_t s = sizeof(member) * size;
+            v->tiny_type = OBJECT;
+            v->u.o.size = size;
+            memcpy(v->u.o.m = (member*)malloc(s), context_pop(c, s), s);
+            ret = PARSE_OK;
+            break;
+        } else {
+            ret = PARSE_MISS_COMMA_OR_CURLY_BRACKET;
+            break;
+        }
+    }
+    if (ret != PARSE_OK) {
+        // pop and free members on the stack
+        free(m.k);
+        for (int i = 0; i < size; ++i) {
+            member* m = (member*)context_pop(c, sizeof(member));
+            free(m->k);
+            tiny_free(&m->v);
+        }
+        v->tiny_type = TINYNULL;
+    }
+    return ret;
+}
+
 /* value = null / false / true / number / string /*/
 static int parse_value(context* c, value* v) {
     switch (*c->json) {
@@ -329,6 +416,8 @@ static int parse_value(context* c, value* v) {
         return parse_string(c, v);
     case '[':
         return parse_array(c, v);
+    case '{':
+        return parse_object(c, v);
     case '\0':
         return PARSE_EXPECT_VALUE;
     }
@@ -423,6 +512,16 @@ size_t get_string_len(const value* v) {
     return v->u.s.len;
 }
 
+void set_string(value* v, const char* s, size_t len) {
+    assert(v != nullptr && (s != nullptr || len == 0));
+    tiny_free(v);
+    v->u.s.s = (char*)malloc(len + 1);
+    memcpy(v->u.s.s, s, len);
+    v->u.s.s[len] = '\0';
+    v->u.s.len = len;
+    v->tiny_type = STRING;
+}
+
 size_t get_array_size(const value* v) {
     assert(v != nullptr && v->tiny_type == ARRAY);
     return v->u.a.size;
@@ -434,14 +533,25 @@ value* get_array_element(const value* v, size_t index) {
     return &v->u.a.e[index];
 }
 
-void set_string(value* v, const char* s, size_t len) {
-    assert(v != nullptr && (s != nullptr || len == 0));
-    tiny_free(v);
-    v->u.s.s = (char*)malloc(len + 1);
-    memcpy(v->u.s.s, s, len);
-    v->u.s.s[len] = '\0';
-    v->u.s.len = len;
-    v->tiny_type = STRING;
+size_t get_object_size(const value* v) {
+    assert(v != nullptr && v->tiny_type == OBJECT);
+    return v->u.o.size;
+}
+
+const char* get_object_key(const value* v, size_t index) {
+    assert(v != nullptr && v->tiny_type == OBJECT);
+    return v->u.o.m[index].k;
+}
+
+size_t get_object_key_length(const value* v, size_t index) {
+    assert(v != nullptr && v->tiny_type == OBJECT);
+    assert(v->u.o.size > index);
+    return v->u.o.m[index].klen;
+}
+
+value* get_object_value(const value* v, size_t index) {
+    assert(v != nullptr && v->tiny_type == OBJECT);
+    return &v->u.o.m[index].v;
 }
 
 void tiny_free(value* v) {
@@ -456,6 +566,13 @@ void tiny_free(value* v) {
             tiny_free(&v->u.a.e[i]);
         }
         free(v->u.a.e);
+        break;
+    case OBJECT:
+        for (i = 0; i < v->u.o.size; ++i) {
+            free(v->u.o.m[i].k);
+            tiny_free(&v->u.o.m[i].v);
+        }
+        free(v->u.o.m);
         break;
     default:
         break;
