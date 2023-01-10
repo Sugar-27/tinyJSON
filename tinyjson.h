@@ -66,6 +66,8 @@ inline void tiny_init(value* v) { v->tiny_type = TINYNULL; }
 
 // JSON解析函数
 int parse(value* v, const char* json);
+// JSON字符串生成函数
+char* stringify(const value* v, size_t* len);
 
 // 访问结果的相关函数
 // 获取类型

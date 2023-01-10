@@ -61,6 +61,8 @@ static void* context_push(context* c, size_t size) {
 
 inline void PUTC(context* c, char ch) { *(char*)context_push(c, sizeof(char)) = ch; }
 
+inline void PUTS(context* c, const char* s, size_t len) { memcpy(context_push(c, len), s, len); }
+
 static void* context_pop(context* c, size_t size) {
     assert(c->top >= size);
     return c->stack + (c->top -= size);
@@ -473,6 +475,103 @@ int parse(value* v, const char* json) {
     free(c.stack);
 
     return ret;
+}
+
+static void stringify_string(context* c, const char* s, size_t len) {
+    assert(s != nullptr);
+    PUTC(c, '"');
+    for (size_t i = 0; i < len; ++i) {
+        unsigned char ch = (unsigned char)s[i];
+        switch (ch) {
+        case '\"':
+            PUTS(c, "\\\"", 2);
+            break;
+        case '\\':
+            PUTS(c, "\\\\", 2);
+            break;
+        case '\b':
+            PUTS(c, "\\b", 2);
+            break;
+        case '\t':
+            PUTS(c, "\\t", 2);
+            break;
+        case '\r':
+            PUTS(c, "\\r", 2);
+            break;
+        case '\n':
+            PUTS(c, "\\n", 2);
+            break;
+        case '\f':
+            PUTS(c, "\\f", 2);
+            break;
+        default:
+            if (ch < 0x20) {
+                char buffer[7];
+                sprintf(buffer, "\\u%04X", ch);
+                PUTS(c, buffer, 6);
+            } else {
+                PUTC(c, s[i]);
+            }
+        }
+    }
+    PUTC(c, '"');
+}
+
+static void stringify_value(context* c, const value* v) {
+    switch (v->tiny_type) {
+    case TINYNULL:
+        PUTS(c, "null", 4);
+        break;
+    case TRUE:
+        PUTS(c, "true", 4);
+        break;
+    case FALSE:
+        PUTS(c, "false", 5);
+        break;
+    case NUMBER:
+        c->top -= 32 - sprintf((char*)context_push(c, 32), "%.17g", v->u.n);
+        break;
+    case STRING:
+        stringify_string(c, v->u.s.s, v->u.s.len);
+        break;
+    case ARRAY:
+        PUTC(c, '[');
+        for (size_t i = 0; i < v->u.a.size; ++i) {
+            if (i != 0) {
+                PUTC(c, ',');
+            }
+            stringify_value(c, &v->u.a.e[i]);
+        }
+        PUTC(c, ']');
+        break;
+    case OBJECT:
+        PUTC(c, '{');
+        for (size_t i = 0; i < v->u.o.size; ++i) {
+            if (i != 0) {
+                PUTC(c, ',');
+            }
+            stringify_string(c, v->u.o.m[i].k, v->u.o.m->klen);
+            PUTC(c, ':');
+            stringify_value(c, &v->u.o.m[i].v);
+        }
+        PUTC(c, '}');
+        break;
+    default:
+        break;
+    }
+}
+
+char* stringify(const value* v, size_t* len) {
+    context c;
+    assert(v != nullptr);
+    c.stack = (char*)malloc(c.size = PARSE_STACK_INIT_SIZE);
+    c.top = 0;
+    stringify_value(&c, v);
+    if (len) {
+        *len = c.top;
+    }
+    PUTC(&c, '\0');
+    return c.stack;
 }
 
 type get_type(const value* v) {
