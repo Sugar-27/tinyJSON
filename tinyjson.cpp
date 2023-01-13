@@ -59,13 +59,60 @@ static void* context_push(context* c, size_t size) {
     return ret;
 }
 
+static void* context_pop(context* c, size_t size) {
+    assert(c->top >= size);
+    return c->stack + (c->top -= size);
+}
+
 inline void PUTC(context* c, char ch) { *(char*)context_push(c, sizeof(char)) = ch; }
 
 inline void PUTS(context* c, const char* s, size_t len) { memcpy(context_push(c, len), s, len); }
 
-static void* context_pop(context* c, size_t size) {
-    assert(c->top >= size);
-    return c->stack + (c->top -= size);
+void copy(value* dst, const value* src) {
+    size_t i;
+    assert(dst != nullptr && src != nullptr && dst != src);
+    switch (src->tiny_type) {
+    case STRING:
+        set_string(dst, src->u.s.s, src->u.s.len);
+        break;
+    case ARRAY:
+        set_array(dst, src->u.a.size);
+        for (i = 0; i < src->u.a.size; ++i) {
+            copy(&dst->u.a.e[i], &src->u.a.e[i]);
+        }
+        dst->u.a.size = src->u.a.size;
+        break;
+    case OBJECT:
+        set_object(dst, src->u.o.size);
+        for (i = 0; i < src->u.o.size; ++i) {
+            auto v = set_object_value(dst, src->u.o.m[i].k, src->u.o.m[i].klen);
+            copy(v, &src->u.o.m[i].v);
+        }
+        dst->u.o.size = src->u.o.size;
+        break;
+    default:
+        tiny_free(dst);
+        memcpy(dst, src, sizeof(value));
+        break;
+    }
+}
+
+void move(value* dst, value* src) {
+    assert(dst != nullptr && src != nullptr && dst != src);
+    tiny_free(dst);
+    memcpy(dst, src, sizeof(value));
+    tiny_init(src);
+}
+
+void swap(value* lhs, value* rhs) {
+    assert(lhs != nullptr && rhs != nullptr);
+    if (lhs == rhs) {
+        return;
+    }
+    value tmp;
+    memcpy(&tmp, rhs, sizeof(value));
+    memcpy(rhs, lhs, sizeof(value));
+    memcpy(lhs, &tmp, sizeof(value));
 }
 
 /* ws = *(%x20 / %x09 / %x0A / %x0D) */
@@ -284,9 +331,7 @@ static int parse_array(context* c, value* v) {
     parse_whitespace(c);
     if (*c->json == ']') {
         c->json++;
-        v->tiny_type = ARRAY;
-        v->u.a.size = 0;
-        v->u.a.e = nullptr;
+        set_array(v, 0);
         return PARSE_OK;
     }
     for (;;) {
@@ -307,7 +352,7 @@ static int parse_array(context* c, value* v) {
             parse_whitespace(c);
         } else if (*c->json == ']') {
             ++c->json;
-            v->tiny_type = ARRAY;
+            set_array(v, size);
             v->u.a.size = size;
             size *= sizeof(value);
             memcpy(v->u.a.e = (value*)malloc(size), context_pop(c, size), size);
@@ -626,10 +671,98 @@ size_t get_array_size(const value* v) {
     return v->u.a.size;
 }
 
+size_t get_array_capacity(const value* v) {
+    assert(v != nullptr && v->tiny_type == ARRAY);
+    return v->u.a.capacity;
+}
+
+void array_reserve(value* v, size_t capacity) {
+    assert(v != nullptr && v->tiny_type == ARRAY);
+    if (v->u.a.capacity >= capacity) {
+        return;
+    }
+    v->u.a.capacity = capacity;
+    v->u.a.e = (value*)realloc(v->u.a.e, capacity * sizeof(value));
+}
+
+void array_shrink(value* v) {
+    assert(v != nullptr && v->tiny_type == ARRAY && v->u.a.capacity >= v->u.a.size);
+    if (v->u.a.size == v->u.a.capacity) {
+        return;
+    }
+    v->u.a.capacity = v->u.a.size;
+    v->u.a.e = (value*)realloc(v->u.a.e, v->u.a.capacity * sizeof(value));
+}
+
+value* array_pushback(value* v) {
+    assert(v != nullptr && v->tiny_type == ARRAY);
+    if (v->u.a.size == v->u.a.capacity) {
+        array_reserve(v, v->u.a.capacity == 0 ? 1 : v->u.a.capacity * EXPAND_COEFFICIENT);
+    }
+    tiny_init(&v->u.a.e[v->u.a.size]);
+    return &v->u.a.e[v->u.a.size++];
+}
+
+void array_popback(value* v) {
+    assert(v != nullptr && v->tiny_type == ARRAY && v->u.a.size > 0);
+    tiny_free(&v->u.a.e[--v->u.a.size]);
+}
+
+value* array_insert(value* v, size_t index) {
+    assert(v != nullptr && v->tiny_type == ARRAY && index <= v->u.a.capacity);
+    if (index == v->u.a.capacity) {
+        return array_pushback(v);
+    }
+    if (v->u.a.capacity < v->u.a.size + 1) {
+        array_reserve(v, v->u.a.capacity == 0 ? 1 : v->u.a.capacity * EXPAND_COEFFICIENT);
+    }
+    for (size_t i = v->u.a.size + 1; i > index; --i) {
+        move(&v->u.a.e[i], &v->u.a.e[i - 1]);
+    }
+    tiny_init(&v->u.a.e[index]);
+    ++v->u.a.size;
+    return &v->u.a.e[index];
+}
+
+void array_erase(value* v, size_t index, size_t count) {
+    assert(v != nullptr && v->tiny_type == ARRAY && index < v->u.a.capacity);
+
+    for (size_t i = 0; i < count; ++i) {
+        tiny_free(&v->u.a.e[index + i]);
+    }
+
+    // for (size_t i = 0; i < count; ++i) {
+    //     move(&v->u.a.e[index + i], &v->u.a.e[index + count + i]);
+    // }
+    memcpy(v->u.a.e + index, v->u.a.e + index + count, (v->u.a.size - index - count) * sizeof(value));
+
+    for (size_t i = v->u.a.size - count; i < v->u.a.size; ++i) {
+        tiny_free(&v->u.a.e[i]);
+    }
+    v->u.a.size -= count;
+}
+
+void array_clear(value* v) {
+    assert(v != nullptr && v->tiny_type == ARRAY);
+    for (size_t i = 0; i < v->u.a.size; ++i) {
+        tiny_free(&v->u.a.e[i]);
+    }
+    v->u.a.size = 0;
+}
+
 value* get_array_element(const value* v, size_t index) {
     assert(v != nullptr && v->tiny_type == ARRAY);
     assert(index < v->u.a.size);
     return &v->u.a.e[index];
+}
+
+void set_array(value* v, size_t capacity) {
+    assert(v != nullptr);
+    tiny_free(v);
+    v->tiny_type = ARRAY;
+    v->u.a.size = 0;
+    v->u.a.capacity = capacity;
+    v->u.a.e = capacity > 0 ? (value*)malloc(capacity * sizeof(value)) : nullptr;
 }
 
 size_t get_object_size(const value* v) {
@@ -644,13 +777,85 @@ const char* get_object_key(const value* v, size_t index) {
 
 size_t get_object_key_length(const value* v, size_t index) {
     assert(v != nullptr && v->tiny_type == OBJECT);
-    assert(v->u.o.size > index);
+    assert(index < v->u.o.size);
     return v->u.o.m[index].klen;
 }
 
 value* get_object_value(const value* v, size_t index) {
     assert(v != nullptr && v->tiny_type == OBJECT);
     return &v->u.o.m[index].v;
+}
+
+void set_object(value* v, size_t capacity) {
+    assert(v != nullptr);
+    tiny_free(v);
+    v->tiny_type = OBJECT;
+    v->u.o.size = 0;
+    v->u.o.capacity = capacity;
+    v->u.o.m = capacity > 0 ? (member*)malloc(capacity * sizeof(member)) : nullptr;
+}
+
+size_t get_object_capacity(const value* v) {
+    assert(v != nullptr && v->tiny_type == OBJECT);
+    return v->u.o.capacity;
+}
+
+void object_reserve(value* v, size_t capacity) {
+    assert(v != nullptr && v->tiny_type == OBJECT);
+    if (v->u.o.capacity >= capacity) {
+        return;
+    }
+    v->u.o.capacity = capacity;
+    v->u.o.m = (member*)realloc(v->u.o.m, capacity * sizeof(member));
+}
+
+void object_shrink(value* v) {
+    assert(v != nullptr && v->tiny_type == OBJECT);
+    if (v->u.o.size == v->u.o.capacity) {
+        return;
+    }
+    v->u.o.capacity = v->u.o.size;
+    v->u.o.m = (member*)realloc(v->u.o.m, v->u.o.capacity * sizeof(member));
+}
+
+void object_clear(value* v) {
+    assert(v != nullptr && v->tiny_type == OBJECT);
+    for (size_t i = 0; i < v->u.o.size; ++i) {
+        free(v->u.o.m[i].k);
+        v->u.o.m[i].k = nullptr;
+        v->u.o.m[i].klen = 0;
+        tiny_free(&v->u.o.m[i].v);
+    }
+    v->u.o.size = 0;
+}
+
+value* set_object_value(value* v, char* key, size_t klen) {
+    assert(v != nullptr && v->tiny_type == OBJECT && key != nullptr);
+    auto index = find_object_index(v, key, klen);
+    if (index != KEY_NOT_EXIST) {
+        return &v->u.o.m[index].v;
+    }
+    if (v->u.o.capacity == v->u.o.size) {
+        object_reserve(v, v->u.o.capacity == 0 ? 1 : v->u.o.capacity * EXPAND_COEFFICIENT);
+    }
+    auto size = v->u.o.size++;
+    v->u.o.m[size].k = (char*)malloc(klen + 1);
+    memcpy(v->u.o.m[size].k, key, klen);
+    v->u.o.m[size].k[klen] = '\0';
+    v->u.o.m[size].klen = klen;
+    tiny_init(&v->u.o.m[size].v);
+    return &v->u.o.m[size].v;
+}
+
+void remove_object_value(value* v, size_t index) {
+    assert(v != nullptr && v->tiny_type == OBJECT && index < v->u.o.size);
+    free(v->u.o.m[index].k);
+    tiny_free(&v->u.o.m[index].v);
+    memcpy(&v->u.o.m[index], &v->u.o.m[index + 1], (v->u.o.size - index - 1) * sizeof(member));
+    auto size = v->u.o.size--;
+    v->u.o.m[size - 1].k = nullptr;
+    v->u.o.m[size - 1].klen = 0;
+    tiny_init(&v->u.o.m[size - 1].v);
 }
 
 void tiny_free(value* v) {
@@ -677,5 +882,63 @@ void tiny_free(value* v) {
         break;
     }
     v->tiny_type = TINYNULL;
+}
+
+size_t find_object_index(const value* v, const char* key, size_t klen) {
+    size_t i;
+    assert(v != nullptr && v->tiny_type == OBJECT && key != nullptr);
+    for (i = 0; i < v->u.o.size; ++i) {
+        if (v->u.o.m[i].klen == klen && memcmp(v->u.o.m[i].k, key, klen) == 0) {
+            return i;
+        }
+    }
+    return KEY_NOT_EXIST;
+}
+
+value* find_object_value(value* v, const char* key, size_t klen) {
+    auto index = find_object_index(v, key, klen);
+    return index == KEY_NOT_EXIST ? nullptr : &v->u.o.m[index].v;
+}
+
+int is_equal(const value* lhs, const value* rhs) {
+    size_t i;
+    assert(lhs != nullptr && rhs != nullptr);
+    if (lhs->tiny_type != rhs->tiny_type) {
+        return 0;
+    }
+
+    switch (lhs->tiny_type) {
+    case STRING:
+        return lhs->u.s.len == rhs->u.s.len && memcmp(lhs->u.s.s, rhs->u.s.s, lhs->u.s.len) == 0;
+    case NUMBER:
+        return lhs->u.n == rhs->u.n;
+    case ARRAY:
+        if (lhs->u.a.size != rhs->u.a.size) {
+            return 0;
+        }
+        for (i = 0; i < lhs->u.a.size; ++i) {
+            if (is_equal(&lhs->u.a.e[i], &rhs->u.a.e[i]) == 0) {
+                return 0;
+            }
+        }
+        return 1;
+    case OBJECT:
+        if (lhs->u.o.size != rhs->u.o.size) {
+            return 0;
+        }
+        for (i = 0; i < lhs->u.o.size; ++i) {
+            auto index = find_object_index(rhs, lhs->u.o.m[i].k, lhs->u.o.m[i].klen);
+            if (index == KEY_NOT_EXIST) {
+                return 0;
+            }
+            if (is_equal(&lhs->u.o.m[i].v, &rhs->u.o.m[index].v) == 0) {
+                return 0;
+            }
+        }
+        return 1;
+    default:
+        // TINYNULL、TRUE、FALSE这三种类型只需要比较类型相等即可
+        return 1;
+    }
 }
 } // namespace tinyjson
